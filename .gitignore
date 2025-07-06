@@ -1,0 +1,9 @@
+build/
+dist/
+hooks/
+vanomalias/
+archivo_original.xlsx
+main.spec
+main.py
+modelo_saltos.pkl
+saltos_anotados.xlsx
