@@ -6,6 +6,8 @@ from openpyxl import load_workbook
 from openpyxl.styles import PatternFill
 from openpyxl.utils import get_column_letter
 
+FILA_START = 9
+
 def init_page():
     st.set_page_config(layout="wide")
     st.title("Detector de Saltos en Series Históricas")
@@ -36,8 +38,11 @@ def backup_file(uploaded_file):
 def check_file_ok(temp_excel_path):
     df_temp = pd.read_excel(temp_excel_path, engine="openpyxl", header=None)
     tipos_series = df_temp.iloc[3]
+    print('tipos_series', tipos_series)
     column_names = df_temp.iloc[2]
-    df_raw = df_temp.iloc[6:]
+    print('column_names', column_names)
+    df_raw = df_temp.iloc[(FILA_START - 1):]
+    df_raw = df_raw[::-1].dropna(how='all').iloc[::-1]
     df_raw.columns = column_names
     df_raw.reset_index(drop=True, inplace=True)
 
@@ -69,7 +74,7 @@ def get_celdas_desactualizadas_serie(df_raw, serie, ultimos_repetidos, idx):
     try:
         celdas_desactualizadas = []
         fecha_col              = df_raw.columns[1]
-        fila_inicio            = df_raw[df_raw[fecha_col] == serie.index[-ultimos_repetidos]].index[0] + 7
+        fila_inicio            = df_raw[df_raw[fecha_col] == serie.index[-ultimos_repetidos]].index[0] + FILA_START
 
         for i in range(ultimos_repetidos):
             fila_excel = fila_inicio + i
@@ -107,13 +112,13 @@ def check_huecos(df_raw, serie, idx, col, dias_hueco):
                     "Serie": col,
                     "Tipo": "Hueco",
                     "Valor": valor_rep,
-                    "Fecha inicio": fecha_inicio.strftime("%Y-%m-%d"),
-                    "Fecha fin": fecha_fin.strftime("%Y-%m-%d"),
+                    "Fecha inicio": fecha_inicio.strftime("%Y-%m-%d") if pd.notna(fecha_inicio) else "",
+                    "Fecha fin": fecha_fin.strftime("%Y-%m-%d") if pd.notna(fecha_fin) else "",
                     "Repeticiones": rep_count
                 })
                 for j in range(rep_count):
                     fecha_hueco = serie.index[i - j - 1]
-                    fila_excel = df_raw[df_raw[fecha_col] == fecha_hueco].index[0] + 7
+                    fila_excel = df_raw[df_raw[fecha_col] == fecha_hueco].index[0] + FILA_START
                     col_excel = get_column_letter(idx + 4)
                     celdas_huecos.append((col_excel, fila_excel, "FFFFC000"))
             rep_count = 1
@@ -126,13 +131,13 @@ def check_huecos(df_raw, serie, idx, col, dias_hueco):
             "Serie": col,
             "Tipo": "Hueco",
             "Valor": valor_rep,
-            "Fecha inicio": fecha_inicio.strftime("%Y-%m-%d"),
-            "Fecha fin": fecha_fin.strftime("%Y-%m-%d"),
+            "Fecha inicio": fecha_inicio.strftime("%Y-%m-%d") if pd.notna(fecha_inicio) else "",
+            "Fecha fin": fecha_fin.strftime("%Y-%m-%d") if pd.notna(fecha_fin) else "",
             "Repeticiones": rep_count
         })
         for j in range(rep_count):
             fecha_hueco = serie.index[-j - 1]
-            fila_excel = df_raw[df_raw[fecha_col] == fecha_hueco].index[0] + 7
+            fila_excel = df_raw[df_raw[fecha_col] == fecha_hueco].index[0] + FILA_START
             col_excel = get_column_letter(idx + 4)
             celdas_huecos.append((col_excel, fila_excel, "FFFFC000"))
 
@@ -147,44 +152,49 @@ def check_saltos_y_rebotes(df_raw, serie, idx, col, tipos_series, umbral_rf, umb
     umbral              = umbral_rf if tipo == 'RF' else umbral_rv
     fecha_col           = df_raw.columns[1]
 
-    serie_pct = serie.pct_change()
+    print('SERIE LEN: ', len(serie))
 
-    for i in range(1, len(serie_pct)):
-        fecha  = serie_pct.index[i]
-        valor  = serie.iloc[i]
-        cambio = serie_pct.iloc[i]
+    try:
+        serie_pct = serie.pct_change()
 
-        if abs(cambio) > umbral:
-            resultados_marcados.append({
-                "Activo": col,
-                "Fecha": fecha,
-                "Valor": valor,
-                "Diferencia": cambio * 100
-            })
-            try:
-                fila_excel = df_raw[df_raw[fecha_col] == fecha].index[0] + 7
-                col_excel  = get_column_letter(idx + 4)
-                celdas_saltos.append((col_excel, fila_excel, "FFFF6666"))  # rojo
-            except IndexError:
-                print('Error salto')
+        for i in range(1, len(serie_pct)):
+            fecha  = serie_pct.index[i]
+            valor  = serie.iloc[i]
+            cambio = serie_pct.iloc[i]
 
-        if i < len(serie_pct) - 1:
-            cambio_sig = serie_pct.iloc[i + 1]
-            if abs(cambio) > umbral and abs(cambio_sig) > umbral:
-                if np.sign(cambio) != np.sign(cambio_sig):
-                    rebotes_detectados.append({
-                        "Activo": col,
-                        "Fecha": fecha,
-                        "Valor": valor,
-                        "Diferencia": cambio * 100
-                    })
-                    try:
-                        fila_excel = df_raw[df_raw[fecha_col] == fecha].index[0] + 7
-                        col_excel = get_column_letter(idx + 4)
-                        celdas_rebotes.append((col_excel, fila_excel, "FFFF6666"))  # rojo
-                    except IndexError:
-                        print('Error rebote')
-    return resultados_marcados, rebotes_detectados, celdas_saltos, celdas_rebotes
+            if abs(cambio) > umbral:
+                resultados_marcados.append({
+                    "Activo": col,
+                    "Fecha": fecha,
+                    "Valor": valor,
+                    "Diferencia": cambio * 100
+                })
+                try:
+                    fila_excel = df_raw[df_raw[fecha_col] == fecha].index[0] + FILA_START
+                    col_excel  = get_column_letter(idx + 4)
+                    celdas_saltos.append((col_excel, fila_excel, "FFFF6666"))  # rojo
+                except IndexError:
+                    print('Error salto')
+
+            if i < len(serie_pct) - 1:
+                cambio_sig = serie_pct.iloc[i + 1]
+                if abs(cambio) > umbral and abs(cambio_sig) > umbral:
+                    if np.sign(cambio) != np.sign(cambio_sig):
+                        rebotes_detectados.append({
+                            "Activo": col,
+                            "Fecha": fecha,
+                            "Valor": valor,
+                            "Diferencia": cambio * 100
+                        })
+                        try:
+                            fila_excel = df_raw[df_raw[fecha_col] == fecha].index[0] + FILA_START
+                            col_excel = get_column_letter(idx + 4)
+                            celdas_rebotes.append((col_excel, fila_excel, "FFFF6666"))  # rojo
+                        except IndexError:
+                            print('Error rebote')
+        return resultados_marcados, rebotes_detectados, celdas_saltos, celdas_rebotes
+    except ValueError:
+        print('Error columna: ', col)
 
 def process_serie_column(df_raw, df, idx, col, dias_repetidos_max, umbral_rf, umbral_rv, dias_hueco, tipos_series):
     info_desactualizada    = (None, None, None)
@@ -197,6 +207,8 @@ def process_serie_column(df_raw, df, idx, col, dias_repetidos_max, umbral_rf, um
     celdas_rebotes         = []
 
     serie = df[col]
+    serie = serie.loc[:serie.last_valid_index()]
+    serie = pd.to_numeric(serie, errors="coerce")
 
     # Comprobar si está desactualizada la serie.
     esta_desactualizada, ultimos_repetidos, ult_val = check_desactualizada(serie, dias_repetidos_max)
@@ -220,7 +232,7 @@ def print_resumen(resultados_marcados, desactualizadas, dias_huecos, rebotes_det
             "Serie": resultado["Activo"],
             "Tipo": "Salto",
             "Valor": resultado["Valor"],
-            "Fecha": resultado["Fecha"].strftime("%Y-%m-%d"),
+            "Fecha": resultado["Fecha"].strftime("%Y-%m-%d") if pd.notna(resultado["Fecha"]) else "",
             "Cambio (%)": round(resultado["Diferencia"], 2)
         })
     for col, val, rep in desactualizadas:
@@ -243,7 +255,7 @@ def print_resumen(resultados_marcados, desactualizadas, dias_huecos, rebotes_det
         resumen_errores.append({
             "Serie": r["Activo"],
             "Tipo": "Rebote",
-            "Fecha": r["Fecha"].strftime("%Y-%m-%d"),
+            "Fecha": r["Fecha"].strftime("%Y-%m-%d") if pd.notna(r["Fecha"]) else "",
             "Valor": r["Valor"],
             "Cambio (%)": round(r["Diferencia"], 2)
         })
@@ -271,10 +283,20 @@ def print_cards(df, resumen_errores, resultados_marcados, rebotes_detectados, di
             else:
                 st.info("Sin incidencias detectadas en esta serie.")
 
-            serie = df[col]
+            serie = df[col].copy()
+
+            # Intentar convertir la serie a valores numéricos
+            serie = pd.to_numeric(serie, errors="coerce")
+
+            # Saltar si no hay al menos 2 valores numéricos válidos
+            if serie.notna().sum() < 2:
+                st.warning("No hay suficientes datos numéricos para graficar esta serie.")
+                continue
+
             fig, ax = plt.subplots()
             ax.plot(serie.index, serie.values, label=col, color="steelblue")
 
+            # Detectar saltos y rebotes
             saltos_fechas = [r["Fecha"] for r in resultados_marcados if r["Activo"] == col]
             rebotes_fechas = [r["Fecha"] for r in rebotes_detectados if r["Activo"] == col]
 
@@ -296,31 +318,31 @@ def print_cards(df, resumen_errores, resultados_marcados, rebotes_detectados, di
             ax.scatter(serie.index[saltos_idx], serie.iloc[saltos_idx], color='red', label='Saltos', zorder=5)
             ax.scatter(serie.index[rebotes_idx], serie.iloc[rebotes_idx], color='orange', label='Rebotes', zorder=5)
 
-            # Pintar tramos huecos (naranja semitransparente)
+            # Pintar tramos huecos (repetidos)
             rep_count = 1
             start_idx = None
             for i in range(1, len(serie)):
                 if pd.isna(serie.iloc[i]) or pd.isna(serie.iloc[i-1]):
                     if rep_count >= dias_hueco and start_idx is not None:
-                        ax.axvspan(serie.index[start_idx], serie.index[i-1], color='orange', alpha=0.2)
+                        ax.axvspan(serie.index[start_idx], serie.index[i - 1], color='orange', alpha=0.2)
                     rep_count = 1
                     start_idx = None
                     continue
-                if serie.iloc[i] == serie.iloc[i-1]:
+                if serie.iloc[i] == serie.iloc[i - 1]:
                     if rep_count == 1:
-                        start_idx = i-1
+                        start_idx = i - 1
                     rep_count += 1
                 else:
                     if rep_count >= dias_hueco and start_idx is not None:
-                        ax.axvspan(serie.index[start_idx], serie.index[i-1], color='orange', alpha=0.2)
+                        ax.axvspan(serie.index[start_idx], serie.index[i - 1], color='orange', alpha=0.2)
                     rep_count = 1
                     start_idx = None
             if rep_count >= dias_hueco and start_idx is not None:
-                ax.axvspan(serie.index[start_idx], serie.index[len(serie)-1], color='orange', alpha=0.2)
+                ax.axvspan(serie.index[start_idx], serie.index[len(serie) - 1], color='orange', alpha=0.2)
 
-            # Pintar tramos desactualizados (azul semitransparente)
+            # Pintar tramos desactualizados
             for col_des, val, rep in desactualizadas:
-                if col_des == col:
+                if col_des == col and rep is not None and rep <= len(serie):
                     ax.axvspan(serie.index[-rep], serie.index[-1], color='blue', alpha=0.2)
 
             ax.set_title(f"Evolución de {col}")
@@ -332,6 +354,76 @@ def print_cards(df, resumen_errores, resultados_marcados, rebotes_detectados, di
             if incidencias:
                 st.write("**Incidencias:**")
                 st.dataframe(pd.DataFrame(incidencias), use_container_width=True)
+    # for idx, col in enumerate(df.columns[2:]):
+    #     with st.expander(f"📈 {col}"):
+    #         incidencias = [e for e in resumen_errores if e.get("Serie") == col]
+
+    #         if incidencias:
+    #             st.info(f"🔍 {len(incidencias)} incidencias detectadas para esta serie.")
+    #         else:
+    #             st.info("Sin incidencias detectadas en esta serie.")
+
+    #         serie = df[col]
+    #         fig, ax = plt.subplots()
+    #         ax.plot(serie.index, serie.values, label=col, color="steelblue")
+
+    #         saltos_fechas = [r["Fecha"] for r in resultados_marcados if r["Activo"] == col]
+    #         rebotes_fechas = [r["Fecha"] for r in rebotes_detectados if r["Activo"] == col]
+
+    #         fechas_index = serie.index
+
+    #         def fechas_a_indices(fechas, index):
+    #             indices = []
+    #             for f in fechas:
+    #                 try:
+    #                     pos = index.get_loc(pd.to_datetime(f))
+    #                     indices.append(pos)
+    #                 except KeyError:
+    #                     pass
+    #             return indices
+
+    #         saltos_idx = fechas_a_indices(saltos_fechas, fechas_index)
+    #         rebotes_idx = fechas_a_indices(rebotes_fechas, fechas_index)
+
+    #         ax.scatter(serie.index[saltos_idx], serie.iloc[saltos_idx], color='red', label='Saltos', zorder=5)
+    #         ax.scatter(serie.index[rebotes_idx], serie.iloc[rebotes_idx], color='orange', label='Rebotes', zorder=5)
+
+    #         # Pintar tramos huecos (naranja semitransparente)
+    #         rep_count = 1
+    #         start_idx = None
+    #         for i in range(1, len(serie)):
+    #             if pd.isna(serie.iloc[i]) or pd.isna(serie.iloc[i-1]):
+    #                 if rep_count >= dias_hueco and start_idx is not None:
+    #                     ax.axvspan(serie.index[start_idx], serie.index[i-1], color='orange', alpha=0.2)
+    #                 rep_count = 1
+    #                 start_idx = None
+    #                 continue
+    #             if serie.iloc[i] == serie.iloc[i-1]:
+    #                 if rep_count == 1:
+    #                     start_idx = i-1
+    #                 rep_count += 1
+    #             else:
+    #                 if rep_count >= dias_hueco and start_idx is not None:
+    #                     ax.axvspan(serie.index[start_idx], serie.index[i-1], color='orange', alpha=0.2)
+    #                 rep_count = 1
+    #                 start_idx = None
+    #         if rep_count >= dias_hueco and start_idx is not None:
+    #             ax.axvspan(serie.index[start_idx], serie.index[len(serie)-1], color='orange', alpha=0.2)
+
+    #         # Pintar tramos desactualizados (azul semitransparente)
+    #         for col_des, val, rep in desactualizadas:
+    #             if col_des == col:
+    #                 ax.axvspan(serie.index[-rep], serie.index[-1], color='blue', alpha=0.2)
+
+    #         ax.set_title(f"Evolución de {col}")
+    #         ax.set_ylabel("Valor")
+    #         ax.legend()
+    #         ax.grid(True)
+    #         st.pyplot(fig)
+
+    #         if incidencias:
+    #             st.write("**Incidencias:**")
+    #             st.dataframe(pd.DataFrame(incidencias), use_container_width=True)
 
 def set_new_excel_to_download(temp_excel_path, celdas_sospechosas, resumen_errores):
     wb = load_workbook(temp_excel_path)
