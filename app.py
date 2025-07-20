@@ -6,7 +6,9 @@ from openpyxl import load_workbook
 from openpyxl.styles import PatternFill
 from openpyxl.utils import get_column_letter
 
-FILA_START = 9
+FILA_START    = 9
+FILA_FAMILIA  = 7
+FILA_STOCK_ID = 3
 
 def init_page():
     st.set_page_config(layout="wide")
@@ -35,23 +37,50 @@ def backup_file(uploaded_file):
 
     return temp_excel_path
 
+def get_tipos_series(df):
+    tipos_series = []
+    columnas_validas = []
+    familias_rf = [1, 2, 3, 4, 5, 6, 7, 8]  # tu lista de familias RF
+
+    for idx, col in enumerate(df.columns[2:]):
+        valor_fila_stk_id = df.iloc[FILA_STOCK_ID - 1, idx + 2]
+
+        if pd.isna(valor_fila_stk_id):
+            continue  # salta columnas sin número en fila 3
+
+        columnas_validas.append(col)
+
+        valor_fila_fam = df.iloc[FILA_FAMILIA - 1, idx + 2]
+        if pd.isna(valor_fila_fam):
+            tipos_series.append('RV')
+        else:
+            tipos_series.append('RF' if int(valor_fila_fam) in familias_rf else 'RV')
+
+    return columnas_validas, tipos_series
+
 def check_file_ok(temp_excel_path):
     df_temp = pd.read_excel(temp_excel_path, engine="openpyxl", header=None)
-    tipos_series = df_temp.iloc[3]
+    # tipos_series = df_temp.iloc[3]
+    columnas_validas, tipos_series = get_tipos_series(df_temp)
     print('tipos_series', tipos_series)
-    column_names = df_temp.iloc[2]
+    # Añadir también las dos primeras columnas (fecha y etiqueta u otras)
+    columnas_finales = list(df_temp.columns[:2]) + columnas_validas
+
+    # column_names = df_temp.iloc[2]
+    column_names = df_temp.iloc[2, columnas_finales]
     print('column_names', column_names)
-    df_raw = df_temp.iloc[(FILA_START - 1):]
+    # df_raw = df_temp.iloc[(FILA_START - 1):]
+    df_raw = df_temp.iloc[(FILA_START - 1):, columnas_finales]
     df_raw = df_raw[::-1].dropna(how='all').iloc[::-1]
     df_raw.columns = column_names
     df_raw.reset_index(drop=True, inplace=True)
 
     if df_raw.empty or df_raw.shape[1] < 3:
         st.error("El archivo debe tener al menos una columna de fechas (columna 2) y dos de datos (desde la columna 3).")
-        return False, None, None
+        return False, None, None, columnas_validas
     else:
         st.success("Archivo cargado correctamente.")
-        return True, df_raw, tipos_series
+        return True, df_raw, tipos_series, columnas_validas
 
 # Devuelve el DataFrame indexado por la fecha columna. La convertimos a datetime por si acaso.
 def get_ordered_dataframe_by_date(df_raw):
@@ -148,11 +177,12 @@ def check_saltos_y_rebotes(df_raw, serie, idx, col, tipos_series, umbral_rf, umb
     rebotes_detectados  = []
     celdas_saltos       = []
     celdas_rebotes      = []
-    tipo                = tipos_series[col] if col in tipos_series.index else 'RV'
+    # tipo                = tipos_series[col] if col in tipos_series.index else 'RV'
+    tipo                = tipos_series[idx] if idx < len(tipos_series) else 'RV'
     umbral              = umbral_rf if tipo == 'RF' else umbral_rv
     fecha_col           = df_raw.columns[1]
 
-    print('SERIE LEN: ', len(serie))
+    # print('SERIE LEN: ', len(serie))
 
     try:
         serie_pct = serie.pct_change()
@@ -244,13 +274,6 @@ def print_resumen(resultados_marcados, desactualizadas, dias_huecos, rebotes_det
         })
     for h in dias_huecos:
         resumen_errores.append(h)
-    # for fecha in dias_huecos:
-    #     resumen_errores.append({
-    #         "Serie": "(varias)",
-    #         "Tipo": "Hueco",
-    #         "Fecha": fecha.strftime("%Y-%m-%d"),
-    #         "Valor": "Repetido"
-    #     })
     for r in rebotes_detectados:
         resumen_errores.append({
             "Serie": r["Activo"],
@@ -273,10 +296,16 @@ def print_resumen(resultados_marcados, desactualizadas, dias_huecos, rebotes_det
 
     return resumen_errores
 
-def print_cards(df, resumen_errores, resultados_marcados, rebotes_detectados, dias_hueco, desactualizadas):
+def print_cards(df, resumen_errores, resultados_marcados, rebotes_detectados, dias_hueco, desactualizadas, tipos_series, columnas_validas):
+    print("Tipos series: ", tipos_series)
+    
     for idx, col in enumerate(df.columns[2:]):
-        with st.expander(f"📈 {col}"):
-            incidencias = [e for e in resumen_errores if e.get("Serie") == col]
+        incidencias = [e for e in resumen_errores if e.get("Serie") == col]
+        estado = f"✅ OK" if not incidencias else f"⚠️ {len(incidencias)} incidencia(s)"
+        print("idx,col: ", idx, " - ", col)
+        tipo = tipos_series[idx + 1] if idx < len(tipos_series) else "RV"
+
+        with st.expander(f"📈 {col} · {estado} · {tipo}"):
 
             if incidencias:
                 st.info(f"🔍 {len(incidencias)} incidencias detectadas para esta serie.")
@@ -284,6 +313,7 @@ def print_cards(df, resumen_errores, resultados_marcados, rebotes_detectados, di
                 st.info("Sin incidencias detectadas en esta serie.")
 
             serie = df[col].copy()
+            serie = serie[serie.index.notna()]
 
             # Intentar convertir la serie a valores numéricos
             serie = pd.to_numeric(serie, errors="coerce")
@@ -354,82 +384,60 @@ def print_cards(df, resumen_errores, resultados_marcados, rebotes_detectados, di
             if incidencias:
                 st.write("**Incidencias:**")
                 st.dataframe(pd.DataFrame(incidencias), use_container_width=True)
-    # for idx, col in enumerate(df.columns[2:]):
-    #     with st.expander(f"📈 {col}"):
-    #         incidencias = [e for e in resumen_errores if e.get("Serie") == col]
 
-    #         if incidencias:
-    #             st.info(f"🔍 {len(incidencias)} incidencias detectadas para esta serie.")
-    #         else:
-    #             st.info("Sin incidencias detectadas en esta serie.")
+def generar_mapa_errores(df, resumen_errores, resultados_marcados, rebotes_detectados, desactualizadas, dias_hueco):
+    mapa_errores = {}
 
-    #         serie = df[col]
-    #         fig, ax = plt.subplots()
-    #         ax.plot(serie.index, serie.values, label=col, color="steelblue")
+    for col in df.columns[2:]:
+        errores = []
 
-    #         saltos_fechas = [r["Fecha"] for r in resultados_marcados if r["Activo"] == col]
-    #         rebotes_fechas = [r["Fecha"] for r in rebotes_detectados if r["Activo"] == col]
+        # H: Hueco (datos repetidos)
+        serie = pd.to_numeric(df[col], errors="coerce")
+        rep_count = 1
+        for i in range(1, len(serie)):
+            if pd.isna(serie.iloc[i]) or pd.isna(serie.iloc[i - 1]):
+                rep_count = 1
+                continue
+            if serie.iloc[i] == serie.iloc[i - 1]:
+                rep_count += 1
+                if rep_count >= dias_hueco:
+                    errores.append("H")
+                    break
+            else:
+                rep_count = 1
 
-    #         fechas_index = serie.index
+        # S: Saltos
+        if any(r["Activo"] == col for r in resultados_marcados):
+            errores.append("S")
 
-    #         def fechas_a_indices(fechas, index):
-    #             indices = []
-    #             for f in fechas:
-    #                 try:
-    #                     pos = index.get_loc(pd.to_datetime(f))
-    #                     indices.append(pos)
-    #                 except KeyError:
-    #                     pass
-    #             return indices
+        # R: Rebotes
+        if any(r["Activo"] == col for r in rebotes_detectados):
+            errores.append("R")
 
-    #         saltos_idx = fechas_a_indices(saltos_fechas, fechas_index)
-    #         rebotes_idx = fechas_a_indices(rebotes_fechas, fechas_index)
+        # D: Desactualizada
+        if any(d[0] == col for d in desactualizadas):
+            errores.append("D")
 
-    #         ax.scatter(serie.index[saltos_idx], serie.iloc[saltos_idx], color='red', label='Saltos', zorder=5)
-    #         ax.scatter(serie.index[rebotes_idx], serie.iloc[rebotes_idx], color='orange', label='Rebotes', zorder=5)
+        mapa_errores[col] = "-".join(sorted(set(errores))) if errores else ""
+    return mapa_errores
 
-    #         # Pintar tramos huecos (naranja semitransparente)
-    #         rep_count = 1
-    #         start_idx = None
-    #         for i in range(1, len(serie)):
-    #             if pd.isna(serie.iloc[i]) or pd.isna(serie.iloc[i-1]):
-    #                 if rep_count >= dias_hueco and start_idx is not None:
-    #                     ax.axvspan(serie.index[start_idx], serie.index[i-1], color='orange', alpha=0.2)
-    #                 rep_count = 1
-    #                 start_idx = None
-    #                 continue
-    #             if serie.iloc[i] == serie.iloc[i-1]:
-    #                 if rep_count == 1:
-    #                     start_idx = i-1
-    #                 rep_count += 1
-    #             else:
-    #                 if rep_count >= dias_hueco and start_idx is not None:
-    #                     ax.axvspan(serie.index[start_idx], serie.index[i-1], color='orange', alpha=0.2)
-    #                 rep_count = 1
-    #                 start_idx = None
-    #         if rep_count >= dias_hueco and start_idx is not None:
-    #             ax.axvspan(serie.index[start_idx], serie.index[len(serie)-1], color='orange', alpha=0.2)
 
-    #         # Pintar tramos desactualizados (azul semitransparente)
-    #         for col_des, val, rep in desactualizadas:
-    #             if col_des == col:
-    #                 ax.axvspan(serie.index[-rep], serie.index[-1], color='blue', alpha=0.2)
-
-    #         ax.set_title(f"Evolución de {col}")
-    #         ax.set_ylabel("Valor")
-    #         ax.legend()
-    #         ax.grid(True)
-    #         st.pyplot(fig)
-
-    #         if incidencias:
-    #             st.write("**Incidencias:**")
-    #             st.dataframe(pd.DataFrame(incidencias), use_container_width=True)
-
-def set_new_excel_to_download(temp_excel_path, celdas_sospechosas, resumen_errores):
+def set_new_excel_to_download(temp_excel_path, celdas_sospechosas, resumen_errores, mapa_errores):
     wb = load_workbook(temp_excel_path)
     ws = wb.active
     for col, fila, color in celdas_sospechosas:
         ws[f"{col}{fila}"].fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
+
+    # Convertimos el generador en lista
+    columnas_fila_3 = list(ws.iter_cols(min_row=3, max_row=3, values_only=True))
+
+    # Recorremos cada columna de la fila 3
+    for col_idx, columna in enumerate(columnas_fila_3, start=1):
+        col_name = columna[0]  # Solo hay una fila, por lo que tomamos el primer valor
+        siglas = mapa_errores.get(col_name, "")
+        if siglas:
+            ws.cell(row=2, column=col_idx, value=siglas)
+            ws.cell(row=2, column=col_idx).fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
 
     if resumen_errores:
         ws_resumen = wb.create_sheet("Resumen_Errores")
@@ -451,7 +459,7 @@ def set_new_excel_to_download(temp_excel_path, celdas_sospechosas, resumen_error
 def process_file(uploaded_file):
     if uploaded_file:
         temp_excel_path = backup_file(uploaded_file)
-        ok, df_raw, tipos_series = check_file_ok(temp_excel_path)
+        ok, df_raw, tipos_series, columnas_validas = check_file_ok(temp_excel_path)
 
         if ok:
             comenzar, dias_repetidos_max, umbral_rf, umbral_rv, dias_hueco = initSettings()
@@ -486,11 +494,13 @@ def process_file(uploaded_file):
                 # RESUMEN DE ERRORES
                 resumen_errores = print_resumen(resultados_marcados, desactualizadas, dias_huecos, rebotes_detectados)
 
+                mapa_errores = generar_mapa_errores(df, resumen_errores, resultados_marcados, rebotes_detectados, desactualizadas, dias_hueco)
+
                 # Son las diferentes tarjetas
-                print_cards(df, resumen_errores, resultados_marcados, rebotes_detectados, dias_hueco, desactualizadas)
+                print_cards(df, resumen_errores, resultados_marcados, rebotes_detectados, dias_hueco, desactualizadas, tipos_series, columnas_validas)
 
                 # Prepara el nuevo Excel con los cambios para descargar
-                set_new_excel_to_download(temp_excel_path, celdas_sospechosas, resumen_errores)
+                set_new_excel_to_download(temp_excel_path, celdas_sospechosas, resumen_errores, mapa_errores)
 
 # COMIENZA LA EJECUCIÓN DE LA APLICACIÓN
 init_page()
